@@ -10,6 +10,7 @@ name ='lib'
 path="lib/mod.rs"
 [dependencies]
 anyhow = "1.0.82"
+console-subscriber = "0.2.0"
 
 
 futures-util = "0.3.30"
