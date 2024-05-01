@@ -35,7 +35,8 @@ pub async fn run_order_book<T: Returnable + DeserializeOwned + std::fmt::Debug>(
                 if let (Some((asks, bids)), Some(instrument_name)) =
                     (json.asks_bids_pair(), json.instrument_name())
                 {
-                    order_book.add_asset(instrument_name.clone());
+                    let instra = instrument_name.clone();
+                    order_book.add_asset(instra);
                     let ask_pairs = asks.iter();
                     let bids_pairs = bids.iter();
                     let mut bids_count = 0;
@@ -57,7 +58,8 @@ pub async fn run_order_book<T: Returnable + DeserializeOwned + std::fmt::Debug>(
 
                     order_book.match_orders(&instrument_name, None);
 
-                    println!("+{ask_count} asks and + {bids_count}")
+                    //println!("+{ask_count} asks and + {bids_count}")
+                    println!("{:#?}", order_book);
                 }
             }
         }

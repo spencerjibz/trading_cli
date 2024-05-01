@@ -7,6 +7,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio_tungstenite::tungstenite::http::response;
 use futures_util::lock::Mutex;
+use crate::trading::Instrument;
+pub enum  ExchangeType {
+     Delibris,
+     Okex
+}
 #[derive(Serialize)]
 /// exchange settings to use for connnections
 pub enum ExchangePairs<'a> {
@@ -25,8 +30,8 @@ impl<'a> ExchangePairs<'a> {
 
     pub fn response (&mut self) -> &mut dyn MessageExtendable {
         match self {
-            ExchangePairs::Deribit(_,_, response) => response,
-            ExchangePairs::Okex(_,_,response ) => response
+            ExchangePairs::Deribit(_,_, response) => response as &mut dyn MessageExtendable,
+            ExchangePairs::Okex(_,_,response ) => response as &mut dyn MessageExtendable
         }
     }
     pub fn get_url(&self) -> &'a str {
@@ -51,12 +56,13 @@ type AskBidPairs = (Vec<(f32, f32)>, Vec<(f32, f32)>);
 /// This gives us one unified interface for each exchange's response to use
 pub trait Returnable {
     fn asks_bids_pair(&self) -> Option<AskBidPairs>;
-    fn instrument_name(&self) -> Option<String>;
+    fn instrument_name(&self) -> Option<Instrument>;
 }
 
 pub trait MessageExtendable {
     fn add_asset(&mut self,asset:&str);
     fn to_json(& self) -> anyhow::Result<String>;
+    
 }
 /// For global usage;
 lazy_static! {

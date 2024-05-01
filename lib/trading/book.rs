@@ -3,13 +3,13 @@ use tokio_tungstenite::tungstenite::http::request;
 
 use crate::trading::{MatchedOrders, OrderStatus};
 
-use super::{Order, PriceColumns, TradeRequest};
+use super::{Instrument, Order, PriceColumns, TradeRequest};
 use crate::utils::{add_each, get_timestamp_ms, match_at_price_level};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use std::vec;
 //  Table columns ->  HashMap<asset (BTC-USD), { asks,bids, spread,orders }>
-pub type OrderTable = HashMap<String, PriceColumns>;
+pub type OrderTable = HashMap<Instrument, PriceColumns>;
 #[derive(Debug)]
 pub struct OrderBook<'a> {
     pub exchange: &'a str,
@@ -28,13 +28,13 @@ impl<'a> OrderBook<'a> {
         }
     }
 
-    pub fn add_asset(&mut self, name: String) {
+    pub fn add_asset(&mut self, name: Instrument) {
         if !self.asset_order_table.contains_key(&name) {
             self.asset_order_table.entry(name).or_default();
         }
     }
 
-    pub fn add_order(&mut self, mut order: Order, asset: &str) {
+    pub fn add_order(&mut self, mut order: Order, asset: &Instrument) {
         if let Some(mut table) = self.asset_order_table.get_mut(asset) {
             add_each(table, &mut order);
             table.orders.lock().unwrap().push_back(order);
@@ -49,7 +49,7 @@ impl<'a> OrderBook<'a> {
 impl<'a> OrderBook<'a> {
     pub fn match_orders(
         &mut self,
-        assets: &str,
+        assets: &Instrument,
         mut external_price_column: Option<&mut PriceColumns>,
     ) {
         // extend our assert_table with the other another one from a different exchange

@@ -1,7 +1,11 @@
-use crate::exchanges;
+use crate::exchanges::{
+    self, string_to_instrument_deribit, string_to_instrument_okex, ExchangeType,
+};
 
 use crate::utils::{add_each, get_timestamp_ms, round};
 use ordered_float::OrderedFloat;
+use std::default;
+use std::fmt::format;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     sync::{Arc, Mutex},
@@ -150,5 +154,73 @@ impl PriceColumns {
             .extend(other.asks.iter().map(|(k, v)| (*k, v.clone())));
 
         self.update_spread_and_mid_price();
+    }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Debug, Default, Clone, Hash)]
+pub enum InstrumentType {
+    #[default]
+    Call,
+    Pull,
+}
+
+impl InstrumentType {
+    pub fn from_given_str(input_str: &str) -> Option<Self> {
+        match input_str {
+            "C" => Some(InstrumentType::Call),
+            "P" => Some(InstrumentType::Pull),
+            _ => None,
+        }
+    }
+    pub fn to_char(&self) -> char {
+        match self {
+            Self::Call => 'C',
+            _ => 'P',
+        }
+    }
+}
+
+use chrono::NaiveDate;
+#[derive(PartialEq, Eq, PartialOrd, Debug, Default, Clone, Hash)]
+pub struct Instrument {
+    pub asset: String,
+    pub strike_price: i64,
+    pub expiration_date: NaiveDate,
+    pub instrument_type: InstrumentType,
+}
+
+impl Instrument {
+    pub fn from_exchange_string(
+        input_str: &str,
+        exchange_type: ExchangeType,
+    ) -> anyhow::Result<Instrument> {
+        use ExchangeType::*;
+        match exchange_type {
+            Delibris => string_to_instrument_deribit(input_str),
+
+            Okex => string_to_instrument_okex(input_str),
+        }
+    }
+
+    pub fn to_exchange_asset_str(&self, exchange_type: ExchangeType) -> String {
+        use ExchangeType::*;
+        match exchange_type {
+            Delibris => format!(
+                "{}-{}-{}-{}",
+                self.asset,
+                self.expiration_date.format("%d%h%y"),
+                self.strike_price,
+                self.instrument_type.to_char()
+            )
+            .to_uppercase(),
+
+            Okex => format!(
+                "{}-{}-{}-{}",
+                self.asset,
+                self.expiration_date.format("%y%m%d"),
+                self.strike_price,
+                self.instrument_type.to_char()
+            ),
+        }
     }
 }

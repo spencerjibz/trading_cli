@@ -1,5 +1,10 @@
+use std::any;
+
+use crate::trading::{Instrument, InstrumentType};
+
 use super::{MessageExtendable, Returnable};
-use anyhow::Ok;
+use anyhow::{ensure, Ok};
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 #[derive(Serialize)]
 pub struct OkexInitMessage {
@@ -22,10 +27,10 @@ impl MessageExtendable for OkexInitMessage {
         }
     }
 
-     fn to_json(& self) ->  anyhow::Result<String>{
-           let json = serde_json::to_string_pretty(&self)?;
-           Ok(json)
-     }
+    fn to_json(&self) -> anyhow::Result<String> {
+        let json = serde_json::to_string_pretty(&self)?;
+        Ok(json)
+    }
 }
 
 impl OkexInitMessage {
@@ -51,10 +56,10 @@ impl MessageExtendable for OkexInitMessageArg {
     fn add_asset(&mut self, asset: &str) {
         self.inst_id = asset.to_owned();
     }
-    fn to_json(& self) ->  anyhow::Result<String>{
-           let json = serde_json::to_string_pretty(&self)?;
-           Ok(json)
-     }
+    fn to_json(&self) -> anyhow::Result<String> {
+        let json = serde_json::to_string_pretty(&self)?;
+        Ok(json)
+    }
 }
 impl OkexInitMessageArg {
     pub fn new(inst_id: &str) -> Self {
@@ -112,10 +117,65 @@ impl Returnable for OkexResponse {
         None
     }
 
-    fn instrument_name(&self) -> Option<String> {
+    fn instrument_name(&self) -> Option<Instrument> {
         if let Some(ref data) = &self.arg {
-            return Some(data.inst_id.clone());
+            let asset_name = data.inst_id.clone();
+            let instrument =
+                Instrument::from_exchange_string(&asset_name, super::ExchangeType::Okex).unwrap();
+            return Some(instrument);
         }
         None
     }
+}
+
+pub fn string_to_instrument_okex(asset: &str) -> Result<crate::trading::Instrument, anyhow::Error> {
+    use chrono::{DateTime, Utc};
+    let parts: Vec<&str> = asset.split('-').collect(); // expected format {asset}-{date}-{strike price} - {C/P}
+
+    ensure!(parts.len() == 5, anyhow::anyhow!("Invalid asset format"));
+
+    let asset_name = format!("{}-{}", parts[0], parts[1]);
+    let date_str = parts[2];
+    let price_str = parts[3];
+    let instrument_type_str = parts[4];
+
+    let mut datetime = NaiveDate::parse_from_str(date_str, "%y%m%d")?;
+    //let date_utc = chrono::DateTime::from_naive_utc_and_offset(datetime.and_hms_opt(0, 0, 0).unwrap(), Utc);
+
+    let price_int: i64 = price_str.parse()?;
+
+    let instrument_type = InstrumentType::from_given_str(instrument_type_str);
+    if let Some(value) = instrument_type {
+        let instrument = Instrument {
+            asset: asset_name,
+            strike_price: price_int,
+            expiration_date: datetime,
+            instrument_type: value,
+        };
+
+        Ok(instrument)
+    } else {
+        Err(anyhow::anyhow!(
+            "unsupported instrument type {instrument_type_str}"
+        ))
+    }
+}
+
+#[test]
+fn parsing_between_string_and_instrument_okex_works() -> anyhow::Result<()> {
+    let asset = "BTC-USD-240427-56000-C";
+    let date = NaiveDate::from_ymd_opt(2024, 4, 27).unwrap();
+    let inst = string_to_instrument_okex(asset)?;
+    let expected = Instrument {
+        asset: "BTC-USD".to_owned(),
+        strike_price: 56000,
+        expiration_date: date,
+        instrument_type: InstrumentType::Call,
+    };
+
+    assert_eq!(inst, expected);
+
+    let instr_to_str = inst.to_exchange_asset_str(crate::exchanges::ExchangeType::Okex);
+    assert_eq!(instr_to_str, asset);
+    Ok(())
 }

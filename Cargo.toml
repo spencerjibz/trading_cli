@@ -10,9 +10,8 @@ name ='lib'
 path="lib/mod.rs"
 [dependencies]
 anyhow = "1.0.82"
+chrono = "0.4.38"
 console-subscriber = "0.2.0"
-
-
 futures-util = "0.3.30"
 lazy_static = "1.4.0"
 ordered-float = { version = "4.2.0", features = ["serde"] }
