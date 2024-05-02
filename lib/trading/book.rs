@@ -1,13 +1,14 @@
 use ordered_float::OrderedFloat;
 use tokio_tungstenite::tungstenite::http::request;
 
-use crate::trading::{MatchedOrders, OrderStatus};
+use crate::trading::{CurrentHoldingPerPrice, MatchedOrders, OrderStatus};
 
 use super::{Instrument, Order, PriceColumns, TradeRequest};
 use crate::utils::{add_each, get_timestamp_ms, match_at_price_level};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::vec;
+use tokio::sync::Mutex;
 //  Table columns ->  HashMap<asset (BTC-USD), { asks,bids, spread,orders }>
 pub type OrderTable = HashMap<Instrument, PriceColumns>;
 #[derive(Debug)]
@@ -42,24 +43,29 @@ impl<'a> OrderBook<'a> {
             table.update_spread_and_mid_price();
         }
     }
+
+    pub fn get_name(&self) -> String {
+        self.exchange.to_owned()
+    }
 }
 
 // -----------------ORDER_MATCHING LOGIC--------------------------------------------------------- //
 
 impl<'a> OrderBook<'a> {
-    pub fn match_orders(
+    pub async fn match_orders(
         &mut self,
         assets: &Instrument,
-        mut external_price_column: Option<&mut PriceColumns>,
+        external_collection: Arc<Mutex<OrderBook<'a>>>,
     ) {
         // extend our assert_table with the other another one from a different exchange
 
+        let mut external_collection = external_collection.lock().await;
+
+        let external_table = external_collection.asset_order_table.get_mut(assets);
+
         let table = self.asset_order_table.get_mut(assets);
 
-        if let Some(asset_table) = table {
-            if let Some(mut col) = external_price_column {
-                asset_table.extend(col)
-            }
+        if let (Some(asset_table), Some(extern_asset_table)) = (table, external_table) {
             use TradeRequest::*;
             let mut orders_to_remove = Vec::new();
             asset_table
@@ -67,26 +73,28 @@ impl<'a> OrderBook<'a> {
                 .lock()
                 .unwrap()
                 .iter_mut()
-                .filter(|current| !current.is_completed())
                 .for_each(|mut order| {
                     let mut remaining_qty = order.quantity;
                     let price: OrderedFloat<f32> = order.price.into();
+                    if order.remaining_qty > 0 {
+                        remaining_qty = order.remaining_qty;
+                    }
                     match order.request {
                         Ask => {
-                            let mut bids = asset_table.bids.iter_mut();
+                            let mut bids = extern_asset_table.bids.iter_mut();
 
                             if let Some((mut x, holding)) = bids.next_back() {
                                 while price <= *x {
-                                    let order_map = asset_table.orders.clone();
                                     let (matched_qty, remove) =
                                         match_at_price_level(holding, &mut remaining_qty);
 
                                     orders_to_remove.extend(remove);
 
-                                    if matched_qty != 0 {
+                                    holding.update_qty_and_amount();
+                                    if matched_qty > 0 {
                                         let matched_order =
-                                            MatchedOrders::new(**x, matched_qty, self.exchange);
-                                        order.filled_with.push(matched_order);
+                                            MatchedOrders::new(**x, matched_qty, "external");
+                                        order.filled_with.push_back(matched_order);
                                     }
                                     if let Some((a, _)) = bids.next_back() {
                                         x = a;
@@ -97,18 +105,17 @@ impl<'a> OrderBook<'a> {
                             }
                         }
                         Bid => {
-                            let mut asks = asset_table.asks.iter_mut();
+                            let mut asks = extern_asset_table.asks.iter_mut();
 
                             if let Some((mut x, holding)) = asks.next() {
                                 while price >= *x {
-                                    let order_map = asset_table.orders.clone();
                                     let (matched_qty, remove) =
                                         match_at_price_level(holding, &mut remaining_qty);
-                                    orders_to_remove.extend(remove);
-                                    if matched_qty != 0 {
+                                    holding.update_qty_and_amount();
+                                    if matched_qty > 0 {
                                         let matched_order =
-                                            MatchedOrders::new(**x, matched_qty, self.exchange);
-                                        order.filled_with.push(matched_order);
+                                            MatchedOrders::new(**x, matched_qty, "external");
+                                        order.filled_with.push_back(matched_order);
                                     }
                                     if let Some((a, _)) = asks.next() {
                                         x = a;
@@ -122,15 +129,10 @@ impl<'a> OrderBook<'a> {
 
                     let acc_qty = order.filled_with.iter().fold(0, |c, n| c + n.quantity);
                     // to get an arbitrage, if our price column is extended with another column from a different exchange and some of our trades are filled with other
-                    let is_arbitrage = order
-                        .filled_with
-                        .iter()
-                        .any(|curr| curr.exchange != self.exchange);
-                    order.is_arbitrage = is_arbitrage;
 
                     if remaining_qty != 0 && remaining_qty < order.quantity {
                         order.status = OrderStatus::Partial;
-                        order.remaining_qty = remaining_qty;
+                        order.remaining_qty = order.quantity - acc_qty;
                         println!(
                             "{:#?}  partially completed with the following trade matches {:#?}",
                             order, order.filled_with

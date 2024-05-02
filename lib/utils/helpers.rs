@@ -2,11 +2,19 @@ use ordered_float::OrderedFloat;
 use serde::de::DeserializeOwned;
 
 use crate::{
-    exchanges::Returnable,
+    exchanges::{Returnable, EXCHANGES},
     trading::{
         CurrentHoldingPerPrice, Order, OrderBook, OrderStatus, PriceColumns, PriceRow, TradeRequest,
     },
 };
+
+use futures_util::{stream::SplitStream, SinkExt, StreamExt};
+use tokio::net::TcpStream;
+use tokio_tungstenite::{
+    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
+};
+
+pub type ReaderStream = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 /// a utility function for adding new orders to the OrderBook Columns
 pub fn add_each(table: &mut PriceColumns, order: &mut Order) {
     let Order {
@@ -83,13 +91,13 @@ fn create_new_holding(
     }
 }
 
+use crate::trading::MininalOrder;
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
-
-use crate::trading::MininalOrder;
+use tokio::sync::Mutex;
 /// Generates a  unique timestamp  to use an id
 pub fn get_timestamp_ms() -> u128 {
     SystemTime::now()
@@ -103,28 +111,102 @@ use std::collections::HashMap;
 pub fn match_at_price_level(
     current_holding: &mut CurrentHoldingPerPrice,
     incoming_order_qty: &mut i32,
-) -> (i32, Vec<u128>) {
+) -> (i32, VecDeque<u128>) {
     let mut done_qty = 0;
 
-    let mut orders_to_remove = vec![];
+    let mut orders_to_remove = VecDeque::new();
 
     current_holding.orders.iter_mut().for_each(|order| {
         if order.qty <= *incoming_order_qty {
             *incoming_order_qty -= order.qty;
             done_qty += order.qty;
-            let reduced_amount = done_qty as f32 * order.price;
-            current_holding.total_quantity -= done_qty;
-            current_holding.total_amount -= reduced_amount;
             order.qty = 0;
-            orders_to_remove.push(order.id);
+            orders_to_remove.push_back(order.id);
         } else {
             order.qty -= *incoming_order_qty;
             done_qty += *incoming_order_qty;
+
             *incoming_order_qty = 0
         }
     });
 
-    current_holding.orders.retain(|x| x.qty != 0);
+    current_holding.orders.retain(|x| x.qty > 0);
+    current_holding.update_qty_and_amount();
 
     (done_qty, orders_to_remove)
+}
+
+pub async fn fetch_bids_and_asks<T: Returnable + DeserializeOwned + std::fmt::Debug>(
+    reader: Arc<Mutex<ReaderStream>>,
+    order_book: Arc<Mutex<OrderBook<'_>>>,
+) -> anyhow::Result<()> {
+    if let Some(Ok(Message::Text(message))) = reader.lock().await.next().await {
+        let json: T = serde_json::from_str(&message)?;
+
+        if let (Some((asks, bids)), Some(instrument_name)) =
+            (json.asks_bids_pair(), json.instrument_name())
+        {
+            let instra = instrument_name.clone();
+            order_book.lock().await.add_asset(instra);
+            let ask_pairs = asks.iter();
+            let bids_pairs = bids.iter();
+            let mut bids_count = 0;
+            let mut ask_count = 0;
+            for (asking_price, quantity) in ask_pairs {
+                let ask_order = Order::new(*asking_price, *quantity as i32, TradeRequest::Ask);
+
+                order_book
+                    .lock()
+                    .await
+                    .add_order(ask_order, &instrument_name);
+                ask_count += 1;
+            }
+
+            for (biding_price, bid_quantity) in bids_pairs {
+                let bid_order = Order::new(*biding_price, *bid_quantity as i32, TradeRequest::Bid);
+                order_book
+                    .lock()
+                    .await
+                    .add_order(bid_order, &instrument_name);
+                bids_count += 1;
+            }
+
+            println!(
+                "+{ask_count} asks and + {bids_count} from {}",
+                order_book.lock().await.exchange
+            );
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn create_connection(
+    exchange_name: &str,
+    asset: Option<&str>,
+) -> anyhow::Result<Arc<Mutex<ReaderStream>>> {
+    let mut map = EXCHANGES.lock().await;
+
+    if let Some(exchange) = map.get_mut(exchange_name) {
+        let mut init_message = exchange.init_message();
+        if let Some(asset_name) = asset {
+            init_message.add_asset(asset_name)
+        }
+
+        let init_message_json = init_message.to_json()?;
+        let url = exchange.get_url();
+        let name = exchange.get_name();
+        println!("connection to {name} exchange");
+        let (stream, _) = connect_async(url).await?;
+        let (mut writer, mut reader) = stream.split();
+
+        let msg = Message::Text(init_message_json);
+
+        writer.send(msg).await?;
+        let clonable_reader = Arc::new(Mutex::new(reader));
+
+        return Ok(clonable_reader);
+    }
+
+    Err(anyhow::anyhow!("unknown exchange name"))
 }

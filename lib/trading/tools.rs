@@ -46,6 +46,15 @@ pub struct CurrentHoldingPerPrice {
     pub orders: Vec<MininalOrder>, //
 }
 
+impl CurrentHoldingPerPrice {
+    pub fn update_qty_and_amount(&mut self) {
+        self.total_quantity = self.orders.iter().fold(0, |c, n| c + n.qty);
+
+        if let Some(first) = self.orders.first() {
+            self.total_amount = self.total_quantity as f32 * first.price;
+        }
+    }
+}
 #[derive(PartialEq, PartialOrd, Debug, Default, Clone)]
 pub enum OrderStatus {
     Completed,
@@ -86,7 +95,7 @@ pub struct Order {
     pub request: TradeRequest,
     pub quantity: i32,
     pub remaining_qty: i32, // the qty required to completed order after a partial trade,
-    pub filled_with: Vec<MatchedOrders>,
+    pub filled_with: VecDeque<MatchedOrders>,
 }
 // custom because we want to add a custom  id (timestamp)
 impl Default for Order {
@@ -99,7 +108,7 @@ impl Default for Order {
             status: OrderStatus::default(),
             request: TradeRequest::default(),
             remaining_qty: 0,
-            filled_with: vec![],
+            filled_with: VecDeque::new(),
         }
     }
 }
@@ -121,6 +130,8 @@ impl Order {
     pub fn is_partial_completed(&self) -> bool {
         self.status.is_partial()
     }
+
+    
 }
 pub type PriceRow = BTreeMap<OrderedFloat<f32>, CurrentHoldingPerPrice>;
 
@@ -132,6 +143,7 @@ pub struct PriceColumns {
     pub midprice: f32, //
     pub orders: Arc<Mutex<VecDeque<Order>>>,
     pub history: VecDeque<Order>, // all completed trades
+    pub exchange_name: String,
 }
 
 impl PriceColumns {
