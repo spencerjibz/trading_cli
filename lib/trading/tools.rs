@@ -11,7 +11,7 @@ use std::{
     sync::{Arc, Mutex},
     thread::sleep,
 };
-use tokio_tungstenite::tungstenite::http::request;
+use tokio_tungstenite::tungstenite::http::{request, Version};
 
 #[derive(PartialEq, PartialOrd, Debug, Default, Clone)]
 pub enum TradeRequest {
@@ -130,8 +130,6 @@ impl Order {
     pub fn is_partial_completed(&self) -> bool {
         self.status.is_partial()
     }
-
-    
 }
 pub type PriceRow = BTreeMap<OrderedFloat<f32>, CurrentHoldingPerPrice>;
 
@@ -193,7 +191,7 @@ impl InstrumentType {
 }
 
 use chrono::NaiveDate;
-#[derive(PartialEq, Eq, PartialOrd, Debug, Default, Clone, Hash)]
+#[derive(PartialEq, Eq, Debug, Default, Clone, Hash)]
 pub struct Instrument {
     pub asset: String,
     pub strike_price: i64,
@@ -202,6 +200,13 @@ pub struct Instrument {
 }
 
 impl Instrument {
+    pub fn to_singular_asset(&self) -> Instrument {
+        let mut instrument = self.clone();
+        if let Some(asset) = instrument.asset.split('-').nth(0) {
+            instrument.asset = asset.to_owned();
+        }
+        instrument
+    }
     pub fn from_exchange_string(
         input_str: &str,
         exchange_type: ExchangeType,
