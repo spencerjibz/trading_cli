@@ -134,7 +134,7 @@ pub fn string_to_instrument_okex(asset: &str) -> Result<crate::trading::Instrume
 
     ensure!(parts.len() == 5, anyhow::anyhow!("Invalid asset format"));
 
-    let asset_name = format!("{}-{}", parts[0], parts[1]);
+    let asset_name = parts[0].to_string();
     let date_str = parts[2];
     let price_str = parts[3];
     let instrument_type_str = parts[4];
