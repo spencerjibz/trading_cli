@@ -65,7 +65,7 @@ impl<'a> OrderBook<'a> {
 
         let table = self.asset_order_table.get_mut(assets);
 
-        if let (Some(asset_table), Some(extern_asset_table)) = (table, external_table) {
+        if let (Some(asset_table), Some(extern_asset_table)) = (table, dbg!(external_table)) {
             use TradeRequest::*;
             let mut orders_to_remove = Vec::new();
             asset_table

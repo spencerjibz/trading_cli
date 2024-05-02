@@ -27,7 +27,9 @@ async fn main() -> anyhow::Result<()> {
         select! {
              _ = task_o => {
                  let mut deribit_ob = deribit_order_book.lock().await;
-                 let instrument = Instrument::from_exchange_string("BTC-10MAY24-66000-C",lib::exchanges::ExchangeType::Delibris)?;
+                 let mut instrument = Instrument::from_exchange_string("BTC-10MAY24-66000-C",lib::exchanges::ExchangeType::Delibris)?;
+                  instrument.asset.push_str("-USD");
+
                  deribit_ob.match_orders(&instrument,okex_order_book.clone()).await
 
              }
@@ -36,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
 
                 let mut okex_ob = okex_order_book.lock().await;
                    let instrument = Instrument::from_exchange_string("BTC-USD-240510-66000-C",lib::exchanges::ExchangeType::Okex)?;
-                  okex_ob.match_orders(&instrument,deribit_order_book.clone()).await
+                  okex_ob.match_orders(&instrument.to_singular_asset(),deribit_order_book.clone()).await
              }
 
         }
